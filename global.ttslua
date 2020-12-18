@@ -1,0 +1,624 @@
+#include utils
+#include config
+#include game-state
+
+function onLoad(saved_data)
+    loadGMCData(saved_data)
+end
+
+function onSave()
+    local script_state = {}
+    script_state["GMC"] = GMC_Data
+    return JSON.encode(script_state)
+end
+
+function onPlayerConnect(player)
+    -- Default players to grey - let them pick a color later
+    player.changeColor('Grey')
+end
+
+function loadGMCData(saved_data)
+    if saved_data ~= "" then
+        local loaded_data = JSON.decode(saved_data)
+        --Set up information off of loaded_data
+        GMC_Data = loaded_data.GMC
+    else
+        --Set up information for if there is no saved saved data
+        GMC_Data = {}
+        GMC_Data['outItems'] = {}
+        GMC_Data['out_bag'] = ''
+        GMC_Data['unlock_items'] = {}
+        GMC_Data['objectScale'] = {}
+        GMC_Data['objectPosition'] = {}
+        GMC_Data['objectRotation'] = {}
+        GMC_Data['player_trays'] = {}
+        GMC_Data['taken_seats'] = {}
+        GMC_Data['player_seats'] = {}
+        GMC_Data['board_color'] = {}
+        GMC_Data['toggle_list'] = {}
+        GMC_Data['powerData'] = {}
+        GMC_Data['offset_increment'] = -100.0
+        for _, partName in ipairs(Config.game_parts) do
+            GMC_Data['toggle_list']['part' .. partName] = true
+        end
+        for _, position in ipairs(Config.player_positions) do
+            GMC_Data['taken_seats'][position.seat] = false
+        end
+    end
+    GameState.objectRotation = GMC_Data['objectRotation']
+    GameState.objectPosition = GMC_Data['objectPosition']
+    GameState.objectScale = GMC_Data['objectScale']
+    GameState.outItems = GMC_Data['outItems']
+    GameState.unlockItems = GMC_Data['unlock_items']
+    GameState.player_trays = GMC_Data['player_trays']
+    GameState.taken_seats = GMC_Data['taken_seats']
+    GameState.player_seats = GMC_Data['player_seats']
+    GameState.board_color = GMC_Data['board_color']
+    GameState.toggle_list = GMC_Data['toggle_list']
+    GameState.powerData = GMC_Data['powerData']
+
+    if GMC_Data['offset_increment'] == nil then
+        GMC_Data['offset_increment'] = -100.0
+    end
+
+    startLuaCoroutine(Global, 'initializeObjects')
+end
+
+-- Sets up power data for board
+function setupPowerData(object)
+    local bounds = object.getBounds()
+    local min_x = bounds.center.x - (bounds.size.x/2)
+    local max_x = bounds.center.x + (bounds.size.x/2)
+    local min_z = bounds.center.z - (bounds.size.z/2)
+    local max_z = bounds.center.z + (bounds.size.z/2)
+
+    local powerToken = nil
+    local powerCounter = nil
+    local factionBoard = nil
+
+    for _, obj in pairs(getAllObjects()) do
+        local pos = obj.getPosition()
+        if pos.x > min_x and pos.x < max_x and pos.z > min_z and pos.z < max_z then
+            -- Check for Power Token or Counter
+            if obj.getName() == "Power Token" then
+                powerToken = obj
+            elseif obj.getName() == "Power Counter" then
+                powerCounter = obj
+            elseif obj.getName() == "Faction Board" then
+                factionBoard = obj
+            end
+        end
+    end
+
+    if powerToken ~= nil then
+        if powerCounter ~= nil then
+            if factionBoard ~= nil then
+                -- Sort snappoints
+                powerPoints = {}
+                for key, value in pairs(factionBoard.getSnapPoints()) do
+                    if (not value.rotation_snap) then
+                        table.insert(powerPoints, value.position)
+                    end
+                end
+                table.sort(powerPoints, Utils.sortFunction)
+                GameState.powerData[object.getGUID()] = {
+                    power = powerCounter.call("getValue"),
+                    tokenGUID = powerToken.getGUID(),
+                    counterGUID = powerCounter.getGUID(),
+                    boardGUID = factionBoard.getGUID(),
+                    points = powerPoints
+                }
+                GameState.powerData[powerToken.getGUID()] = object.getGUID()
+                GameState.powerData[powerCounter.getGUID()] = object.getGUID()
+            end
+        end
+    end
+end
+
+-- Creates player tray buttons
+function setupTrayButtons(object)
+    -- Clear all existing buttons
+    object.clearButtons()
+    if GameState.toggle_list['play'] or GameState.toggle_list['part' .. object.getName() .. 's'] == false then
+        return
+    end
+
+    local buttons = {}
+    if GameState.player_trays[object.guid].seat == 0 then
+        for _, position in ipairs(Config.player_positions) do
+            if GameState.taken_seats[position.seat] == false then
+                table.insert(buttons, position.seat)
+            end
+        end
+    else
+        table.insert(buttons, 0)
+    end
+
+    for count, p in ipairs(buttons) do
+        local f = Utils.partial(trayButtonClick_TrayPlace, p)
+        _G['trayButtonClick_' .. p] = f
+        object.createButton({
+            label=tostring(p),
+            click_function="trayButtonClick_" .. p,
+            function_owner=Global,
+            position={-6,0.3,count - (#buttons / 2)},
+            rotation={0,90,0}, height=300, width=200,
+            font_size=250,
+            color={1,1,1},
+            font_color={0,0,0}
+        })
+    end
+end
+
+--Creates game object buttons
+function setupGameObjectButtons(object)
+    object.clearButtons()
+
+    for count, map in ipairs(object.getObjects()) do
+        local f = Utils.partial(mapButtonClick_MapPlace, map.name)
+        _G['mapButtonClick_' .. map.name] = f
+        object.createButton({
+            label=map.name,
+            click_function="mapButtonClick_" .. map.name,
+            function_owner=Global,
+            position={0,0.3,-(2 + count)},
+            rotation={0,180,0},
+            height=350,
+            width=2100,
+            font_size=250,
+            color=Utils.bcolor('map' .. map.name),
+            font_color=Utils.fcolor('map' .. map.name)
+        })
+    end
+
+    for count, part in ipairs(Config.game_parts) do
+        f = Utils.partial(partButtonClick_Part, part)
+        _G['partButtonClick_' .. part] = f
+        object.createButton({
+            label=part,
+            click_function="partButtonClick_" .. part,
+            function_owner=Global,
+            position={5,0.3,4 - count},
+            rotation={0,180,0}, height=350, width=2100,
+            font_size=250,
+            color=Utils.bcolor('part' .. part),
+            font_color=Utils.fcolor('part' .. part)
+        })
+    end
+
+    object.createButton({
+            label='Play Game',
+            click_function="togglePlay",
+            function_owner=Global,
+            position={0,0.3,5},
+            rotation={0,180,0},
+            height=350,
+            width=2100,
+            font_size=250,
+            color=Utils.bcolor('play'),
+            font_color=Utils.fcolor('play')
+        })
+
+end
+
+
+-- Game object functions
+function togglePlay(object, player_clicker_color, alt_click)
+    if GameState.toggle_list['play'] then
+        return
+    end
+
+    -- Lock Map
+    for _, game_object in pairs(getAllObjects()) do
+        -- Look for Player Board
+        if string.find(game_object.getName(), "Player Board") then
+            game_object.interactable = false
+        end
+    end
+
+    -- Turning on Turns
+    Turns.enable = true
+
+    GameState.toggle_list['play'] = true
+
+    setupGameObjectButtons(object)
+    for guid, _ in pairs(GameState.player_trays) do
+        setupTrayButtons(getObjectFromGUID(guid))
+    end
+
+    for _, game_object in pairs(getAllObjects()) do
+        -- do everything on the boards first
+        if not Utils.contains(Config.player_tray_object_names, game_object.getName()) then
+            if game_object.getPosition().z > 125 or game_object.getPosition().z < -125 then
+                game_object.destruct()
+            end
+        end
+    end
+
+    for _, game_object in pairs(getAllObjects()) do
+
+        -- then do the boards
+        if Utils.contains(Config.player_tray_object_names, game_object.getName()) then
+            if game_object.getPosition().z > 125 or game_object.getPosition().z < -125 then
+                game_object.destruct()
+            end
+        end
+    end
+
+end
+
+
+--Sends objects from the bags within the game object to their positions based on sub bag names
+function mapButtonClick_MapPlace(mapName, object, player_clicker_color, alt_click)
+    if GameState.toggle_list['play'] then
+        return
+    end
+
+    recallMap(object)
+
+    if mapName == GMC_Data['out_bag'] then
+        GMC_Data['out_bag'] = ''
+        setupGameObjectButtons(object)
+        return
+    else
+        GameState.toggle_list['map' .. mapName] = true
+        setupGameObjectButtons(object)
+    end
+
+    GMC_Data['out_bag'] = mapName
+    local mapBag
+    for _, mapBagInBag in pairs(object.getObjects()) do
+        if mapBagInBag.name == mapName then
+            mapBag = object.takeObject({guid=mapBagInBag.guid, position={-100, -100, -100}})
+            break
+        end
+    end
+
+    for _, subBagInBag in pairs(mapBag.getObjects()) do
+        local subBag = mapBag.takeObject({guid=subBagInBag.guid, position={0, -100, 0}})
+
+        local config
+        if subBag.getName() == 'Board' then
+            config = {position={0, 1, 0}, rotation={0, 0, 0}, lock=true}
+        elseif subBag.getName() == 'Rules' then
+            config = {position={40, 1, -34}, rotation={0, 0, 0}, lock=true}
+        elseif subBag.getName() == 'Figures' then
+            config = {position={35, 1, 30}, rotation={0, 0, 0}, lock=false}
+        elseif subBag.getName() == 'Dice' then
+            config = {position={-28, 1, 30}, rotation={0, 0, 0}, lock=false}
+        else
+            config = {position={70, 10, 50}, rotation={0, 0, 0}, lock=false}
+        end
+        local objects = {}
+        for _, bagObj in pairs(subBag.getObjects()) do
+            local item = subBag.takeObject({guid=bagObj.guid, position={0, -10, 0}, rotation=config.rotation})
+            item.setLock(true)
+            table.insert(objects, item)
+            GameState.outItems[item.guid] = subBag.guid
+            local states = item.getStates()
+            if states ~= nil then
+                for _, state in pairs(states) do
+                    GameState.outItems[state.guid] = subBag.guid
+                end
+            end
+        end
+
+        Wait.condition(
+                Utils.partial(placeObjects, {objects=objects, config=config}),
+                Utils.partial(objectsReady, objects),
+                3,
+                Utils.partial(placeObjects, {objects=objects, config=config})
+        )
+        mapBag.putObject(subBag)
+    end
+    object.putObject(mapBag)
+    broadcastToAll("Map Placed", {1,1,1})
+end
+
+function objectsReady(objects)
+    for _, item in ipairs(objects) do
+        if item.getBounds().size.x == 0 then
+            return false
+        end
+    end
+    return true
+end
+
+function placeObjects(args)
+    local objects = args.objects
+    local x = args.config.position[1]
+    local y = args.config.position[2]
+    local z = args.config.position[3]
+    local offset = 0
+    local first = true
+    for _, item in ipairs(objects) do
+        if first then
+            first = false
+        else
+            offset = offset + (item.getBounds().size.x / 2) + 0.25
+        end
+        item.setPosition({x + offset, y, z})
+        offset = offset + (item.getBounds().size.x / 2) + 0.25
+        item.setLock(args.config.lock)
+    end
+end
+
+--Recalls objects to bag from table
+function recallMap(object)
+    mapName = GMC_Data['out_bag']
+    if mapName == '' then
+        return
+    end
+
+    GameState.toggle_list['map' .. mapName] = false
+
+    local mapBag
+    for _, mapBagInBag in pairs(object.getObjects()) do
+        if mapBagInBag.name == mapName then
+            mapBag = object.takeObject({guid=mapBagInBag.guid, position={100, -100, 100}})
+            break
+        end
+    end
+
+    for item_guid, bag_guid in pairs(GameState.outItems) do
+        local item_obj = getObjectFromGUID(item_guid)
+        local bag_obj = mapBag.takeObject({guid=bag_guid, position={0, -100, 0}})
+        if item_obj ~= nil and bag_obj ~= nil then
+            bag_obj.putObject(item_obj)
+        end
+        GameState.outItems[item_guid] = nil
+        mapBag.putObject(bag_obj)
+    end
+
+    object.putObject(mapBag)
+end
+
+
+--Turns on and off parts
+function partButtonClick_Part(partName, object, player_clicker_color, alt_click)
+    if GameState.toggle_list['play'] then
+        return
+    end
+
+    if GameState.toggle_list['part' .. partName] then
+        --- currently on
+        for _, obj in pairs(getAllObjects()) do
+            if obj.getName() == partName then
+                if obj.getLock() == false then
+                    GameState.unlockItems[obj.guid] = true
+                end
+                obj.setLock(true)
+                GameState.objectScale[obj.guid] = obj.getScale()
+                GameState.objectPosition[obj.guid] = obj.getPosition()
+                GameState.objectRotation[obj.guid] = obj.getRotation()
+                obj.setScale({0,0,0})
+                obj.setPosition({GMC_Data['offset_increment'],-50,3})
+                GMC_Data['offset_increment'] = GMC_Data['offset_increment'] + 0.000001
+                if GMC_Data['offset_increment'] > 100 then
+                    GMC_Data['offset_increment'] = -100
+                end
+            end
+        end
+        GameState.toggle_list['part' .. partName] = false
+    else
+        --- currently off
+        for _, obj in pairs(getAllObjects()) do
+            if obj.getName() == partName then
+                obj.setScale(GameState.objectScale[obj.guid])
+                obj.setPosition(GameState.objectPosition[obj.guid])
+                obj.setRotation(GameState.objectRotation[obj.guid])
+                if GameState.unlockItems[obj.guid] == true then
+                    obj.setLock(false)
+                end
+            end
+        end
+        GameState.toggle_list['part' .. partName] = true
+    end
+
+    setupGameObjectButtons(object)
+    for guid, _ in pairs(GameState.player_trays) do
+        setupTrayButtons(getObjectFromGUID(guid))
+    end
+end
+
+
+
+
+-- Player Tray functions
+
+function trayButtonClick_TrayPlace(position, object, player_clicker_color, alt_click)
+    log('click tray place')
+    local bounds = object.getBounds()
+    local tray_rot = object.getRotation()
+    local min_x = bounds.center.x - (bounds.size.x/2)
+    local max_x = bounds.center.x + (bounds.size.x/2)
+    local min_z = bounds.center.z - (bounds.size.z/2)
+    local max_z = bounds.center.z + (bounds.size.z/2)
+
+    local translate
+    local rotate
+    local player_color
+    if position == 0 then
+        if GameState.board_color[object.guid] ~= player_clicker_color then
+            broadcastToColor("That is not your player tray. Leave it or change colour to move the tray.",
+                    player_clicker_color, {1, 1, 1})
+            return
+        end
+        translate = GameState.player_trays[object.guid].position
+        rotate = GameState.player_trays[object.guid].rotate
+        GameState.taken_seats[GameState.player_trays[object.guid].seat] = false
+        GameState.player_seats[player_clicker_color] = nil
+        player_color = GameState.board_color[object.guid]
+        destroyActiveTrayObjects(object.guid)
+        log(string.format('put tray %s back', object.guid))
+    else
+        if GameState.player_seats[player_clicker_color] ~= nil then
+            broadcastToColor("You already have a player tray out. Return it or change colour to select a new tray.",
+                    player_clicker_color, {1, 1, 1})
+            return
+        elseif player_clicker_color == "Black" then
+            broadcastToColor("You are not a player so you may not take out a tray.",
+                    player_clicker_color, {1, 1, 1})
+            return
+        end
+        GameState.player_seats[player_clicker_color] = position
+        translate = Config.player_positions[position].position
+        rotate = Config.player_positions[position].rotate
+        GameState.taken_seats[position] = true
+        player_color = player_clicker_color
+        GameState.board_color[object.guid] = player_clicker_color
+        log(string.format('take tray %s out', object.guid))
+    end
+    GameState.player_trays[object.guid].seat = position
+
+    local locks = {}
+    local positions = {}
+    local to_copy = {}
+    -- Utils.findInRadius(obj.getPosition(), 50, function (obj)
+    --     log(obj)
+    -- end)
+    for _, obj in pairs(getAllObjects()) do
+        local pos = obj.getPosition()
+        if pos.x > min_x and pos.x < max_x and pos.z > min_z and pos.z < max_z then
+            if obj.interactable then
+                locks[obj] = obj.getLock()
+                positions[obj] = object.positionToLocal(pos)
+                obj.setLock(true)
+                table.insert(to_copy, obj)
+            end
+        end
+    end
+
+    local hidden_to_move = {}
+    for guid, pos in pairs(GameState.objectPosition) do
+        if pos.x > min_x and pos.x < max_x and pos.z > min_z and pos.z < max_z then
+            hidden_to_move[guid] = object.positionToLocal(pos)
+        end
+    end
+
+    object.setPosition(translate)
+    object.setRotation({0, (rotate + 90) % 360, 0})
+
+    for obj, pos in pairs(positions) do
+        if obj ~= object then
+            local rot = obj.getRotation()
+            obj.setPosition(object.positionToWorld(pos))
+            obj.setRotation({
+                rot.x,
+                (rotate + rot.y - (tray_rot.y - 90)) % 360,
+                rot.z
+            })
+        end
+    end
+    for obj, lock in pairs(locks) do
+        obj.setLock(lock)
+    end
+
+    for guid, pos in pairs(hidden_to_move) do
+        local rot = GameState.objectRotation[guid]
+        GameState.objectPosition[guid] = object.positionToWorld(pos)
+        GameState.objectRotation[guid] = Vector(
+            rot.x,
+            (rotate + rot.y - (tray_rot.y - 90)) % 360,
+            rot.z
+        )
+    end
+
+
+    for guid, _ in pairs(GameState.player_trays) do
+        setupTrayButtons(getObjectFromGUID(guid))
+    end
+    local params = {
+        position = object.positionToWorld({x=1.1, y=1.55, z=0}),
+        rotation = {0, rotate, 0},
+        scale    = {x=17.41, y=3.63, z=3.08 }
+    }
+    if position == 0 and player_color ~= "Black" then
+        params.position = Config.color_positions[player_color]
+        params.rotation = {0, 180, 0}
+    else
+        setupActiveTrayObjects(object.guid, player_color)
+    end
+    Player[player_color].setHandTransform(params, 1)
+end
+
+function banButton()
+    if GameState.toggle_list['play'] then
+        return
+    end
+
+    NM_counter_GUID = "96688d"
+    NT_counter_GUID = "385644"
+    IGOO_counter_GUID = "1a65dd"
+    FGOO_counter_GUID = "3f7637"
+
+    NM_list = {}
+    NT_list = {}
+    IGOO_list = {}
+    FGOO_list = {}
+
+    for _, game_object in pairs(getAllObjects()) do
+        if string.match(game_object.getName(), "FGOO - ") then
+            table.insert(FGOO_list, game_object)
+
+        elseif string.match(game_object.getName(), "IGOO - ") then
+            table.insert(IGOO_list, game_object)
+
+        elseif string.match(game_object.getName(), "NT - ") then
+            table.insert(NT_list, game_object)
+
+        elseif string.match(game_object.getName(), "NM - ") then
+            table.insert(NM_list, game_object)
+        end
+    end
+
+    banButtonHelper(NM_counter_GUID, NM_list)
+    banButtonHelper(NT_counter_GUID, NT_list)
+    banButtonHelper(IGOO_counter_GUID, IGOO_list)
+    banButtonHelper(FGOO_counter_GUID, FGOO_list)
+
+end
+
+function banButtonHelper(counter_GUID, object_list)
+
+    ban_num = getObjectFromGUID(counter_GUID).getValue()
+    object_list_size = #object_list
+
+    if ban_num > object_list_size then
+        ban_num = object_list_size
+    elseif ban_num < 0 then
+        ban_num = 0
+    end
+
+    math.randomseed(os.time())
+
+    while ban_num ~= 0 do
+        random_num = math.random(object_list_size)
+
+        game_object = table.remove(object_list, random_num)
+
+        game_object.setRotationSmooth({0, 270, 180}, false, false)
+        game_object_position = game_object.getPosition()
+        game_object.setPositionSmooth({game_object_position.x, 1.65, game_object_position.z}, false, false)
+
+        ban_num = ban_num - 1
+        object_list_size = object_list_size - 1
+    end
+end
+
+function resetButton()
+    if GameState.toggle_list['play'] then
+        return
+    end
+
+    for _, game_object in pairs(getAllObjects()) do
+        if string.match(game_object.getName(), "FGOO - ") or
+        string.match(game_object.getName(), "IGOO - ") or
+        string.match(game_object.getName(), "NT - ") or
+        string.match(game_object.getName(), "NM - ") then
+            game_object.setRotationSmooth({0, 270, 0}, false, false)
+            game_object_position = game_object.getPosition()
+            game_object.setPositionSmooth({game_object_position.x, 1.3, game_object_position.z}, false, false)
+        end
+    end
+end

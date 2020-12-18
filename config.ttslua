@@ -1,0 +1,49 @@
+Config = Config or {}
+
+-- Game parts are the groups of components to enable to disable. The object names must match these names
+Config.game_parts = {
+    'High Priest',
+    'Brain Cylinder',
+    'Colour Out Of Space',
+    'Neutral Spell Books',
+    'Unique High Priests',
+    'Custom Factions',
+}
+
+-- Game controller object name to attach control buttons to
+Config.game_object_name = 'Cthulhu Wars'
+
+-- Player Tray object name for moving varying faction/team trays to position
+Config.player_tray_object_names = {
+    'Player Tray',
+    'Official Faction',
+    'Custom Faction',
+}
+
+-- Player position location vectors
+Config.player_positions = {
+    {seat=1, position={x=30, y=1.8, z=65}, rotate=180},
+    {seat=2, position={x=-28, y=1.8, z=65}, rotate=180},
+    {seat=3, position={x=-80, y=1.8, z=28}, rotate=90},
+    {seat=4, position={x=82, y=1.8, z=28}, rotate=270},
+    {seat=5, position={x=-80, y=1.8, z=-30}, rotate=90},
+    {seat=6, position={x=82, y=1.8, z=-30}, rotate=270},
+    {seat=7, position={x=30, y=1.8, z=-65}, rotate=0},
+    {seat=8, position={x=-28, y=1.8, z=-65}, rotate=0},
+}
+
+-- Player color default position vectors
+Config.color_positions = {}
+Config.color_positions["Brown"] = {x=255, y=0.03, z=-130.73}
+Config.color_positions["White"] = {x=175, y=0.03, z=-130.73}
+Config.color_positions["Pink"] = {x=125, y=0.03, z=-130.73}
+Config.color_positions["Purple"] = {x=75, y=0.03, z=-130.73}
+Config.color_positions["Blue"] = {x=25, y=0.03, z=-130.73}
+Config.color_positions["Teal"] = {x=-25, y=0.03, z=-130.73}
+Config.color_positions["Green"] = {x=-75, y=0.03, z=-130.73}
+Config.color_positions["Yellow"] = {x=-125, y=0.03, z=-130.73}
+Config.color_positions["Orange"] = {x=-175, y=0.03, z=-130.73}
+Config.color_positions["Red"] = {x=-225, y=0.03, z=-130.73}
+
+-- Name for dice roller scripting zones
+Config.dice_roller_name = 'Dice Roller'

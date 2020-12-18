@@ -1,0 +1,132 @@
+Utils = Utils or {}
+Utils.Object = Utils.Object or {}
+
+function Utils.partial(f, arg)
+    return function(...)
+        return f(arg, ...)
+    end
+end
+
+function Utils.contains(tab, item)
+    for _, i in pairs(tab) do
+        if i == item then
+            return true
+        end
+    end
+    return false
+end
+
+function Utils.bcolor(toggle)
+    if GameState.toggle_list[toggle] then
+        return {1, 1, 1}
+    else
+        return {0, 0, 0}
+    end
+end
+
+function Utils.fcolor(toggle)
+    if GameState.toggle_list[toggle] then
+        return {0, 0, 0}
+    else
+        return {1, 1, 1}
+    end
+end
+
+function Utils.Object.forEach(callBack)
+    assert(type(callBack) == 'function')
+
+    for _, obj in ipairs(getAllObjects()) do
+        local name = obj.getName()
+        callBack(name, obj)
+    end
+end
+
+function Utils.Object.findByPattern(pattern)
+    assert(type(pattern) == 'string')
+    local result = {}
+
+    for _, object in ipairs(getAllObjects()) do
+        local match = string.match(object.getName(), pattern)
+        if match then
+            table.insert(result, {object, match})
+        end
+    end
+
+    return result
+end
+
+function Utils.findInRadius(pos, radius, callBack)
+    assert(type(pos) == 'table')
+    assert(radius ~= nil)
+
+    local hitList = Physics.cast({
+        origin = pos,
+        direction = {0,1,0},
+        type = 2,
+        size = {radius,radius,radius},
+        max_distance = 0,
+    })
+    for _, obj in pairs(hitList) do
+      callBack(obj.hit_object)
+    end
+end
+
+function Utils.filter(list, callBack)
+   local result = {}
+
+   for k, v in pairs(list) do
+      if callBack(k, v) then
+         table.insert(result, v)
+      end
+   end
+
+   return result
+end
+
+function Utils.forEach(list, callBack)
+   for k, v in pairs(list) do
+      callBack(k, v)
+   end
+end
+
+function Utils.spawnMarker(target_position)
+    target_position.y = 5
+    local newObj = spawnObject({
+      type='Chinese_Checkers_Piece',
+      position=target_position
+    })
+    newObj.lock()
+end
+
+function Utils.findMin(table, minFunction)
+    assert(type(table) == 'table'
+        and ((not minFunction) or type(minFunction) == 'function'))
+
+    local minScore = nil
+    local minKey, minValue = nil, nil
+    for k, v in pairs(table) do
+        local score = (minFunction and minFunction(v)) or tonumber(v)
+        if score and (not minScore or score < minScore) then
+            minScore = score
+            minKey = k
+            minValue = v
+        end
+    end
+    return minKey, minValue
+end
+
+function Utils.findBelow(pos)
+    assert(pos and type(pos.x) == 'number')
+    local hitList = Physics.cast({
+        origin       = pos,
+        direction    = {0,-10,0},
+        type         = 1,
+        max_distance = 2,
+        debug        = true,
+    })
+
+    local _, result = Utils.findMin(hitList, function(item)
+      return item.distance
+    end)
+    return result.hit_object
+end

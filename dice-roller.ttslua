@@ -1,0 +1,40 @@
+function updateRandomSeed()
+    local chance = math.random(1,7)
+
+    if chance == 1 then
+        math.randomseed(os.time())
+    end
+end
+
+function rollDice()
+  updateRandomSeed()
+  local bounds = self.getBounds()
+  local size = bounds.size
+  local foundList = Physics.cast( {
+      origin = self.getPosition(),
+      direction = {0, 0.2, 0},
+      type = 2,
+      size = {size.x, 0.2, size.z},
+      orientation = self.getRotation()
+  } )
+  for _, hitTable in pairs(foundList) do
+      local found = hitTable.hit_object
+      if found.getName() ~= 'Dice Roller' then
+        found.setValue(math.random(1,6))
+      end
+  end
+end
+
+
+function onLoad()
+	self.createButton( {
+		click_function = 'rollDice',
+		function_owner = self,
+		label = 'Roll',
+		position = {0, 0.1, 0.88},
+		rotation = {0, 0, 0},
+		width = 480,
+		height = 20,
+		font_size = 80
+	} )
+end

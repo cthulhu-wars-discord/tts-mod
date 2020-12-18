@@ -1,0 +1,97 @@
+MIN_VALUE = 0
+MAX_VALUE = 999
+
+function onload(saved_data)
+    current_value = 0
+
+    if saved_data ~= "" then
+        local loaded_data = JSON.decode(saved_data)
+        current_value = loaded_data[1]
+    end
+
+    createAll()
+end
+
+function createAll()
+
+    ttText = current_value .. "\nPower"
+
+    self.createButton({
+      label = tostring(current_value),
+      click_function = "add_subtract",
+      tooltip = ttText,
+      function_owner = self,
+      position = {0,0.05,-0.2},
+      height=800,
+      width=1000,
+      alignment = 3,
+      scale = {x=1.5, y=1.5, z=1.5},
+      font_size = 600,
+      font_color = {1,1,1,95},
+      color = {0,0,0,0}
+      })
+
+    self.createInput({
+        value = "Power",
+        input_function = "null",
+        tooltip = ttText,
+        function_owner = self,
+        alignment = 3,
+        position = {0,0.05,1.7},
+        rotation = {180, 180, 0},
+        width = 1200,
+        height = 1000,
+        font_size = 350,
+        scale = {x=-1, y=1, z=1},
+        font_color = {1,1,1,95},
+        color = {0,0,0,0}
+        })
+
+
+end
+
+function add_subtract(_obj, _color, alt_click)
+    change = alt_click and -1 or 1
+    new_value = current_value + change
+    trayGUID = Global.call("powerDataHelper", {key=self.getGUID()})
+    if trayGUID ~= nil then
+      Global.call("updatePower", {trayGUID = trayGUID, newPower = new_value})
+    else
+      updateValue(new_value)
+    end
+    updateSave()
+
+end
+
+function externalUpdate(params)
+  updateValue(params.power)
+end
+
+function updateValue(new_value)
+    current_value = math.min(math.max(new_value, MIN_VALUE), MAX_VALUE)
+    ttText = current_value .. "\nPower"
+
+    self.editButton({
+        index = 0,
+        label = tostring(current_value),
+        tooltip = ttText
+        })
+
+    self.editInput({
+        index = 0,
+        tooltip = ttText
+        })
+end
+
+function updateSave()
+    local data_to_save = {current_value}
+    saved_data = JSON.encode(data_to_save)
+    self.script_state = saved_data
+end
+
+function getValue()
+  return current_value
+end
+
+function null()
+end

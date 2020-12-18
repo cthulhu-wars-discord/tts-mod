@@ -1,0 +1,155 @@
+GameState = GameState or {}
+ObjectCache = ObjectCache or {}
+ObjectCache.trays = {}
+ObjectCache.bags = {}
+ObjectCache.powerCounters = {}
+
+function getSortedSnapPointsForBoard(board)
+  local result = {}
+  for key, value in pairs(board.getSnapPoints()) do
+      if (not value.rotation_snap) then
+          table.insert(result, value.position)
+      end
+  end
+  table.sort(result, function (a, b)
+      return a.x>b.x
+  end)
+  return result
+end
+
+function setupActiveTrayObjects(trayGuid, color)
+  ObjectCache.trays[trayGuid].owner = color
+  local obj = getObjectFromGUID(trayGuid)
+  local transRight = obj.getTransformRight()
+  local transForward = obj.getTransformForward()
+  local pos = obj.getPosition()
+  local rotate = obj.getRotation()
+
+  local apTokenPos = pos + transRight * 12 + Vector(0, 5, 0)
+  local powerCounterPos = apTokenPos + transForward * 19
+  local diceRollerPos = powerCounterPos + Vector(0, -2, 0) + transRight * -27
+
+  local apTokenBag = getObjectFromGUID(ObjectCache.bags.activePassedTokens)
+  apTokenBag.takeObject({
+    smooth=false,
+    position=apTokenPos,
+    rotation=rotate + Vector(0, 90, 0),
+    callback_function=function (apToken)
+      ObjectCache.trays[trayGuid].apToken = apToken.getGUID()
+    end
+  })
+
+  local rollerToClone = getObjectFromGUID(ObjectCache.bags.diceRollers)
+  spawnObjectJSON({
+    json=rollerToClone.getJSON(),
+    position=diceRollerPos,
+    rotation=rotate + Vector(0, 90, 0),
+    callback_function=function (roller)
+      ObjectCache.trays[trayGuid].diceRoller = roller.getGUID()
+      roller.setName('Dice Roller')
+      roller.setLock(true)
+    end
+  })
+
+  local counterToClone = getObjectFromGUID(ObjectCache.bags.powerCounters)
+  spawnObjectJSON({
+    json=counterToClone.getJSON(),
+    position=powerCounterPos,
+    rotation=rotate + Vector(0, 90, 0),
+    callback_function=function (counter)
+      local counterGuid = counter.getGUID()
+      counter.setName('Power Counter')
+      counter.setLock(false)
+      counter.setColorTint(stringColorToRGB(color))
+      counter.call('setValue', 8)
+      ObjectCache.powerCounters[counterGuid] = trayGuid
+      ObjectCache.trays[trayGuid].pCounter = counterGuid
+    end
+  })
+
+  Utils.findInRadius(pos, 50, function (obj)
+    if obj.getName() == "Power Token" then
+        ObjectCache.trays[trayGuid].pToken = obj.getGUID()
+        obj.interactable = false
+    elseif obj.getName() == "Faction Board" then
+        local snapPoints = getSortedSnapPointsForBoard(obj)
+        ObjectCache.trays[trayGuid].board = obj.getGUID()
+        ObjectCache.trays[trayGuid].powerTokenPositions = snapPoints
+    end
+  end)
+
+  setPowerTokenPosition(ObjectCache.trays[trayGuid], 8)
+end
+
+function powerDataHelper(params)
+  return ObjectCache.powerCounters[params.key]
+end
+
+function setPowerTokenPosition(trayData, val)
+  assert(type(trayData) == 'table')
+  assert(type(val) == 'number')
+  local token = getObjectFromGUID(trayData.pToken)
+  local board = getObjectFromGUID(trayData.board)
+
+  local snapPos = trayData.powerTokenPositions[val + 1]
+  if snapPos ~= nil then
+    token.setPositionSmooth(board.positionToWorld(snapPos))
+  end
+end
+
+function setPowerCounterVal(trayData, val)
+    local counter = getObjectFromGUID(trayData.pCounter)
+    counter.call('setValue', val)
+end
+
+function updatePower(params)
+    log(string.format('update to %s', params.newValue))
+    local trayGuid = ObjectCache.powerCounters[params.counterGuid]
+    local trayData = ObjectCache.trays[trayGuid]
+
+    setPowerTokenPosition(trayData, params.newValue)
+    setPowerCounterVal(trayData, params.newValue)
+end
+
+function destroyActiveTrayObjects(trayGuid)
+    local trayInfo = ObjectCache.trays[trayGuid]
+    local apToken = getObjectFromGUID(trayInfo.apToken)
+    local pCounter = getObjectFromGUID(trayInfo.pCounter)
+    local roller = getObjectFromGUID(trayInfo.diceRoller)
+    destroyObject(pCounter)
+    destroyObject(apToken)
+    destroyObject(roller)
+    ObjectCache.trays[trayGuid] = {}
+end
+
+function initializeObjects()
+    Utils.Object.forEach(function (name, obj)
+        if Utils.contains(Config.player_tray_object_names, name) then
+            ObjectCache.trays[obj.guid] = {}
+            if GameState.player_trays[obj.guid] == nil then
+                GameState.player_trays[obj.guid] = {
+                    seat=0,
+                    position=obj.getPosition(),
+                    rotate=obj.getRotation().y - 90
+                }
+            end
+            setupTrayButtons(obj)
+        elseif name == 'tray-power-counter' then
+          ObjectCache.bags.powerCounters = obj.guid
+          obj.setLock(true)
+        elseif name == 'cw-dice-roller' then
+          ObjectCache.bags.diceRollers = obj.guid
+          obj.setLock(true)
+        elseif name == 'cw-active-passed-tokens' then
+          ObjectCache.bags.activePassedTokens = obj.guid
+          obj.setLock(true)
+        elseif name == Config.game_object_name then
+            ObjectCache.gameObject = obj.guid
+          setupGameObjectButtons(obj)
+          obj.interactable = false
+        end
+    end)
+
+  -- need to return 1 since this is a coroutine
+  return 1
+end

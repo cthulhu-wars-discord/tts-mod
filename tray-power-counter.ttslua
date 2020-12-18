@@ -1,0 +1,80 @@
+MIN_VALUE = 0
+MAX_VALUE = 20
+CURRENT_VALUE = 0
+
+function onload(saved_data)
+    initialize()
+end
+
+function initialize()
+
+    ttText = CURRENT_VALUE .. "\nPower"
+
+    self.createButton({
+      label = tostring(CURRENT_VALUE),
+      click_function = "add_subtract",
+      tooltip = ttText,
+      function_owner = self,
+      position = {0,0.05,-0.2},
+      height=800,
+      width=1000,
+      alignment = 3,
+      scale = {x=1.5, y=1.5, z=1.5},
+      font_size = 600,
+      font_color = {1,1,1,95},
+      color = {0,0,0,0}
+      })
+
+    self.createInput({
+        value = "Power",
+        input_function = "null",
+        tooltip = ttText,
+        function_owner = self,
+        alignment = 3,
+        position = {0,0.05,1.7},
+        rotation = {180, 180, 0},
+        width = 1200,
+        height = 1000,
+        font_size = 350,
+        scale = {x=-1, y=1, z=1},
+        font_color = {1,1,1,95},
+        color = {0,0,0,0}
+        })
+
+
+end
+
+function add_subtract(_obj, _color, alt_click)
+    change = alt_click and -1 or 1
+    new_value = CURRENT_VALUE + change
+    if new_value > MAX_VALUE then
+      new_value = MAX_VALUE
+    end
+    Global.call("updatePower", {
+      counterGuid = self.getGUID(),
+      newValue = new_value
+    })
+end
+
+function setValue(new_value)
+    CURRENT_VALUE = math.min(math.max(new_value, MIN_VALUE), MAX_VALUE)
+    ttText = CURRENT_VALUE .. "\nPower"
+
+    self.editButton({
+        index = 0,
+        label = tostring(CURRENT_VALUE),
+        tooltip = ttText
+        })
+
+    self.editInput({
+        index = 0,
+        tooltip = ttText
+        })
+end
+
+function getValue()
+  return CURRENT_VALUE
+end
+
+function null()
+end
