@@ -70,7 +70,7 @@ function setupActiveTrayObjects(trayGuid, color)
   Utils.findInRadius(pos, 50, function (obj)
     if obj.getName() == "Power Token" then
         ObjectCache.trays[trayGuid].pToken = obj.getGUID()
-        obj.interactable = false
+        obj.setLock(true)
     elseif obj.getName() == "Faction Board" then
         local snapPoints = getSortedSnapPointsForBoard(obj)
         ObjectCache.trays[trayGuid].board = obj.getGUID()

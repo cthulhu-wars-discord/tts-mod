@@ -1,5 +1,5 @@
 MIN_VALUE = 0
-MAX_VALUE = 20
+MAX_VALUE = 99
 CURRENT_VALUE = 0
 
 function onload(saved_data)
