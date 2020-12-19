@@ -1,14 +1,22 @@
 MIN_VALUE = 0
 MAX_VALUE = 99
 CURRENT_VALUE = 0
+CURRENT_KEY = ''
 
 function onload(saved_data)
     initialize()
 end
 
+function setKey(val)
+  CURRENT_KEY = val
+  self.editInput({
+        value = CURRENT_KEY
+        })
+end
+
 function initialize()
 
-    ttText = CURRENT_VALUE .. "\nPower"
+    ttText = string.format('%s %s', CURRENT_VALUE, CURRENT_KEY)
 
     self.createButton({
       label = tostring(CURRENT_VALUE),
@@ -23,25 +31,23 @@ function initialize()
       font_size = 600,
       font_color = {1,1,1,95},
       color = {0,0,0,0}
-      })
+    })
 
     self.createInput({
-        value = "Power",
-        input_function = "null",
-        tooltip = ttText,
-        function_owner = self,
-        alignment = 3,
-        position = {0,0.05,1.7},
-        rotation = {180, 180, 0},
-        width = 1200,
-        height = 1000,
-        font_size = 350,
-        scale = {x=-1, y=1, z=1},
-        font_color = {1,1,1,95},
-        color = {0,0,0,0}
-        })
-
-
+      value = CURRENT_KEY,
+      input_function = "null",
+      tooltip = ttText,
+      function_owner = self,
+      alignment = 3,
+      position = {0,0.05,1.7},
+      rotation = {180, 180, 0},
+      width = 1200,
+      height = 1000,
+      font_size = 350,
+      scale = {x=-1, y=1, z=1},
+      font_color = {1,1,1,95},
+      color = {0,0,0,0}
+    })
 end
 
 function add_subtract(_obj, _color, alt_click)
@@ -50,7 +56,7 @@ function add_subtract(_obj, _color, alt_click)
     if new_value > MAX_VALUE then
       new_value = MAX_VALUE
     end
-    Global.call("updatePower", {
+    Global.call(string.format('update%s', CURRENT_KEY), {
       counterGuid = self.getGUID(),
       newValue = new_value
     })
@@ -58,7 +64,7 @@ end
 
 function setValue(new_value)
     CURRENT_VALUE = math.min(math.max(new_value, MIN_VALUE), MAX_VALUE)
-    ttText = CURRENT_VALUE .. "\nPower"
+    ttText = string.format('%s %s', CURRENT_VALUE, CURRENT_KEY)
 
     self.editButton({
         index = 0,

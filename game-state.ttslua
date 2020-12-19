@@ -3,6 +3,7 @@ ObjectCache = ObjectCache or {}
 ObjectCache.trays = {}
 ObjectCache.bags = {}
 ObjectCache.powerCounters = {}
+ObjectCache.doomCounters = {}
 
 function getSortedSnapPointsForBoard(board)
   local result = {}
@@ -33,6 +34,12 @@ function initializeObjects()
           ObjectCache.bags.powerCounters = obj.guid
           obj.setLock(true)
           obj.interactable = false
+        elseif name == 'cw-utility-tray' then
+          obj.setLock(true)
+          obj.interactable = false
+        elseif name == 'cw-game-board' then
+          obj.setLock(true)
+          obj.interactable = false
         elseif name == 'cw-dice-roller' then
           ObjectCache.bags.diceRollers = obj.guid
           obj.setLock(true)
@@ -60,9 +67,10 @@ function setupActiveTrayObjects(trayGuid, color)
   local pos = obj.getPosition()
   local rotate = obj.getRotation() + Vector(0, 90, 0)
 
-  local apTokenPos = pos + transRight * 12 + Vector(0, 5, 0)
-  local powerCounterPos = apTokenPos + transForward * 19
-  local diceRollerPos = powerCounterPos + Vector(0, -2, 0) + transRight * -27
+  local apTokenPos = pos + transRight * 15 + Vector(0, 5, 0)
+  local powerCounterPos = apTokenPos + transForward * 10
+  local doomCounterPos = powerCounterPos + transForward * 10
+  local diceRollerPos = doomCounterPos + Vector(0, -2, 0) + transRight * -31
 
   local apTokenToClone = getObjectFromGUID(ObjectCache.bags.activePassedTokens)
   Utils.cloneObject(apTokenToClone, apTokenPos, rotate, function (apToken)
@@ -86,9 +94,21 @@ function setupActiveTrayObjects(trayGuid, color)
       counter.setName('Power Counter')
       counter.setLock(false)
       counter.setColorTint(stringColorToRGB(color))
+      counter.call('setKey', 'Power')
       counter.call('setValue', 8)
       ObjectCache.powerCounters[counterGuid] = trayGuid
       ObjectCache.trays[trayGuid].pCounter = counterGuid
+    end
+  )
+  Utils.cloneObject(counterToClone, doomCounterPos, rotate, function (counter)
+      local counterGuid = counter.getGUID()
+      counter.setName('Doom Counter')
+      counter.setLock(false)
+      counter.setColorTint(stringColorToRGB(color))
+      counter.call('setKey', 'Doom')
+      counter.call('setValue', 0)
+      ObjectCache.doomCounters[counterGuid] = trayGuid
+      ObjectCache.trays[trayGuid].dCounter = counterGuid
     end
   )
 
@@ -135,13 +155,28 @@ function updatePower(params)
     setPowerCounterVal(trayData, params.newValue)
 end
 
+function setDoomTokenPosition(trayData, val)
+    log('TODO: set doom token pos')
+    local dToken = getObjectFromGUID(trayData.dCounter)
+    dToken.call('setValue', val)
+end
+
+function updateDoom(params)
+    local trayGuid = ObjectCache.doomCounters[params.counterGuid]
+    local trayData = ObjectCache.trays[trayGuid]
+
+    setDoomTokenPosition(trayData, params.newValue)
+end
+
 function destroyActiveTrayObjects(trayGuid)
     local trayInfo = ObjectCache.trays[trayGuid]
     local apToken = getObjectFromGUID(trayInfo.apToken)
     local pCounter = getObjectFromGUID(trayInfo.pCounter)
+    local dCounter = getObjectFromGUID(trayInfo.dCounter)
     local roller = getObjectFromGUID(trayInfo.diceRoller)
     destroyObject(pCounter)
     destroyObject(apToken)
+    destroyObject(dCounter)
     destroyObject(roller)
     ObjectCache.trays[trayGuid] = {}
     ObjectCache.powerCounters = Utils.filter(ObjectCache.powerCounters, function (k, v)
