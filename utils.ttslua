@@ -98,6 +98,15 @@ function Utils.spawnMarker(target_position)
     newObj.lock()
 end
 
+function Utils.cloneObject(toClone, position, rotation, callBack)
+    spawnObjectJSON({
+        json=toClone.getJSON(),
+        position=position,
+        rotation=rotation,
+        callback_function=callBack
+    })
+end
+
 function Utils.findMin(table, minFunction)
     assert(type(table) == 'table'
         and ((not minFunction) or type(minFunction) == 'function'))

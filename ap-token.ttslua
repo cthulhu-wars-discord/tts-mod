@@ -1,0 +1,950 @@
+-- ############################################################################
+-- #### START #include <~/CrLua/Objects/ActivePassedToken>
+-- ############################################################################
+
+--- Active/passed token.
+-- @author Darrell
+--
+-- Place one token near each player, each token assigns itself to the closest
+-- seated player.
+--
+-- When flipped to "passed" the token will automatically skip that player's
+-- turn, broadcasting to all players that player has passed.
+--
+-- Once all players have passed, the token disables turns (via Turns.enable)
+-- and all tokens flip back to active.
+
+local TAG = 'ActivePassedToken'
+
+-------------------------------------------------------------------------------
+-- OBJECT EVENT METHODS
+
+function onLoad()
+    -- If already assigned to a color and there exists a different token also
+    -- assigned to that color, unassign self (e.g., copy/paste).
+    local color = myColor()
+    if color and anyPeerIsColor(color) then
+        self.setName(defaultObjectName())
+    end
+
+    -- When initially loading the game, flip token for the player.
+    local color = myColor()
+    if not isActive() and CrLua.TTS.Player.isSeated(color) then
+        self.flip()
+    end
+
+    -- Wait to be at rest (might be flying from a container to intended
+    -- destination), then attempt to assign to closest player's hand.  If there
+    -- already exists a peer token for that color leave self unassigned.
+    local function delayedResetTokenForNewOwner()
+        if not myColor() then
+            if self.resting then
+                resetTokenForNewOwner()
+            else
+                Wait.time(delayedResetTokenForNewOwner, 2)
+            end
+        end
+    end
+    if not myColor() then
+        Wait.time(delayedResetTokenForNewOwner, 4)
+    end
+    CrLua.Log.d(TAG, 'onLoad "' .. (self.getName() or '') .. '"')
+end
+
+function onDrop(player_color)
+    -- If not yet assigned to a player, attempt to do so now.
+    if not myColor() then
+        resetTokenForNewOwner()
+    end
+end
+
+function onPlayerTurnStart(playerColorStart, playerColorPrevious)
+    CrLua.Log.d(TAG, 'onPlayerTurnStart ' .. (playerColorStart or 'nil'))
+
+    -- If not yet assigned to a player, attempt to do so now.
+    if not myColor() then
+        resetTokenForNewOwner()
+    end
+
+    -- Do not manipulate any Turns state now, let all objects process the
+    -- same turn start values and maybe pass the turn after a few frames.
+    if isMyTurn() then
+        Wait.frames(maybePassTurn, 2)
+    end
+end
+
+function onPlayerChangeColor(playerColor)
+    if playerColor == myColor() and not isActive() then
+        self.flip()
+    end
+end
+
+-------------------------------------------------------------------------------
+
+--- Get the color from an Active/Passed token object name.
+-- @param name string : game Object name.
+-- @return color string : color, or nil if not valid.
+function objectNameToColor(name)
+    -- All possible player colors (including "spectators").
+    local validColorNames = {
+        White = true, Brown = true, Red = true, Orange = true, Yellow = true,
+        Green = true, Teal = true, Blue = true, Purple = true, Pink = true,
+        Grey = true, Black = true
+    }
+    local color = string.match(name, '^Active/Passed %((%a+)%)$')
+    -- Accept "Red", "red", "RED", and I suppose even "rED".
+    color = color and (string.upper(string.sub(color, 1, 1)) .. string.lower(string.sub(color, 2)))
+    return validColorNames[color] and color
+end
+
+--- Get an Active/Passed token object name for the given color.
+function colorToObjectName(color)
+    return string.format('Active/Passed (%s)', color or 'unassigned')
+end
+
+function defaultObjectName()
+    return colorToObjectName()
+end
+
+function myColor()
+    return objectNameToColor(self.getName())
+end
+
+-------------------------------------------------------------------------------
+
+--- Is this object an Active/Passed token?
+-- @param name string : peer game Object name.
+-- @return boolean true if peer.
+function isPeerName(name)
+    local color = objectNameToColor(name)
+    if color then
+        CrLua.Log.d(TAG, 'isPeer found ' .. color)
+    end
+    return color and true
+end
+
+--- Get all Active/Passed tokens on the board.
+-- @param includeSelf boolean include this object too?
+-- @return table list of objects
+function getPeers(includeSelf)
+    local result = {}
+    for _, object in ipairs(getAllObjects()) do
+        if isPeerName(object.getName()) and (object ~= self or includeSelf) then
+            table.insert(result, object)
+        end
+    end
+    CrLua.Log.d(TAG, 'getPeers: found ' .. #result .. ' peers')
+    return result
+end
+
+--- Make sure each player is in the list without repeats.
+-- @return boolean true if all players have one token.
+function sanityCheckPeersWithIncludeSelf(peers)
+    local result = true
+    local colorCount = {}
+    for _, peer in ipairs(peers) do
+        local color = objectNameToColor(peer.getName())
+        if color then
+            colorCount[color] = (colorCount[color] or 0) + 1
+        end
+    end
+    for color, count in pairs(colorCount) do
+        if count > 1 then
+            result = false
+            local player = Player[color]
+            local name = (player and player.steam_name) or color
+            printToAll('Warning: player ' .. name .. ' has multiple active/passed tokens', color)
+        end
+    end
+    local seated = getSeatedPlayers()
+    for _, color in ipairs(seated) do
+        if not colorCount[color] then
+            result = false
+            local player = Player[color]
+            local name = (player and player.steam_name) or color
+            printToAll('Warning: player ' .. name .. ' does not have an active/passed token', color)
+        end
+    end
+    return result
+end
+
+--- Is this token showing "active"?
+-- @return boolean true if active.
+function isActive()
+    local result = not self.is_face_down
+    CrLua.Log.d(TAG, 'isActive -> ' .. tostring(result))
+    return result
+end
+
+--- Is any active/passed token still active?
+-- @param peers list of active/passed token objects.
+-- @return color, color pair: any seated player active?  any missing players active?
+function anyPeerIsActive(peers)
+    local activeSeated = false
+    local activeNotSeated = false
+    for _, peer in ipairs(peers) do
+        if not peer.is_face_down then
+            local peerColor = objectNameToColor(peer.getName())
+            if CrLua.TTS.Player.isSeated(peerColor) then
+                activeSeated = activeSeated or peerColor
+            else
+                activeNotSeated = activeNotSeated or peerColor
+            end
+        end
+    end
+    CrLua.Log.d(TAG, 'anyPeerActive -> ' .. tostring(activeSeated) .. ', ' .. tostring(activeNotSeated))
+    return activeSeated, activeNotSeated
+end
+
+function anyPeerIsColor(color)
+    local peers = getPeers(false)
+    for _, peer in ipairs(peers) do
+        local peerColor = objectNameToColor(peer.getName())
+        if peerColor == color then
+            return true
+        end
+    end
+    return false
+end
+
+function setActivePeersWithIncludeSelf(peers)
+    for _, peer in ipairs(peers) do
+        local peerColor = objectNameToColor(peer.getName())
+        if peer.is_face_down and CrLua.TTS.Player.isSeated(peerColor) then
+            peer.flip()
+        end
+    end
+end
+
+--- Is the current turn the player who owns this token?
+-- @return boolean true if my turn.
+function isMyTurn()
+    local result = Turns.enable and Turns.turn_color == myColor()
+    CrLua.Log.d(TAG, 'isMyTurn -> ' .. tostring(result))
+    return result
+end
+
+-------------------------------------------------------------------------------
+
+--- Assign this to the closest seated player.
+-- Also tints the side of the token for a visual confirmation.
+function resetTokenForNewOwner()
+    local oldColor = myColor()
+    local newColor = playerColorAtPosition(self.getPosition())
+
+    -- If another token is already assigned to that color, do not claim it.
+    if anyPeerIsColor(newColor) then
+        newColor = nil
+    end
+
+    -- Tint this object to indicate color.
+    CrLua.Log.d(TAG, 'resetTokenForNewOwner ' .. (oldColor or '<nil>') .. ' -> ' .. (newColor or '<nil>'))
+    self.setColorTint(newColor or 'Grey')
+
+    -- Also rename self.
+    local name = colorToObjectName(newColor)
+    self.setName(name)
+end
+
+--- Pass turn if this token is set to "passed".  If all tokens are set to
+-- "passed" then disable turns altogether, requiring turns be re-enabled
+-- via some external means to proceed.
+-- @return boolean true if passed turn.
+function maybePassTurn()
+    -- Out of paranoia make sure it is still this token owner's turn.
+    -- It is possible some other script changed turns while this function
+    -- was waiting to be called, or in some cases such as hot-seat games
+    -- it appears TTS calls onPlayerTurnStart twice each turn.
+    if not isMyTurn() then
+        CrLua.Log.d(TAG, 'maybePassTurn: not my turn, aborting')
+        return false
+    end
+
+    -- Make sure everyone has exactly one active/passed token.
+    local peers = getPeers(true)
+    local sanityCheck = sanityCheckPeersWithIncludeSelf(peers)
+    if not sanityCheck then
+        CrLua.Log.d(TAG, 'maybePassTurn: sanity check failed, aborting')
+        return false
+    end
+
+    -- Do nothing if still active (play normally).
+    if isActive() then
+        CrLua.Log.d(TAG, 'maybePassTurn: still active, aborting')
+        return false
+    end
+
+    -- At this point we know it is "my" turn and the token is set to "passed".
+    -- Pass this turn, or if all players have passed disable turns altogether.
+    -- (Requires external event to re-enable turns.)
+    -- Note: if the sanity check failed then there is not one token per player.
+    -- In that case, continue to pass turns but do not consider "all" passed.
+    local myColor = myColor()
+    local activeSeated, activeNotSeated = anyPeerIsActive(peers)
+    if activeSeated then
+        CrLua.Log.d(TAG, 'maybePassTurn: at least one active seated peer, passing turn')
+        local player = Player[myColor]
+        local name = (player and player.steam_name) or myColor or '?'
+        broadcastToAll('Player ' .. name .. ' passed.', myColor)
+        Turns.turn_color = Turns.getNextTurnColor()
+    elseif activeNotSeated then
+        CrLua.Log.d(TAG, 'maybePassTurn: at least one active unseated peer, aborting')
+        broadcastToAll('Player ' .. activeNotSeated .. ' still active but not at table')
+    else
+        CrLua.Log.d(TAG, 'maybePassTurn: no active peers, disabling turns')
+        broadcastToAll('All players have passed.', myColor)
+        setActivePeersWithIncludeSelf(peers)
+        -- Turns.enable = false
+    end
+    return true
+end
+
+-------------------------------------------------------------------------------
+
+--- Get player for the given table position.
+-- @param position table : {x,y,z} table.
+-- @return color string : player at postition, or nil if none.
+function playerColorAtPosition(position)
+    local playerColor = CrLua.TTS.Player.closest(position)
+    CrLua.Log.d(TAG, 'playerColorAtPosition -> ' .. (playerColor or '<nil>'))
+    return playerColor
+end
+
+-------------------------------------------------------------------------------
+
+-- ############################################################################
+-- #### START #include <~/CrLua/CrLua>
+-- ############################################################################
+
+-------------------------------------------------------------------------------
+--- Create the base CrLua table, with require function for dependencies.
+-- @author Darrell
+--
+-- Suggested use: at the END of the object script (so #include does not affect
+-- line number reporting in the above portion), include CrLua and dependencies:
+--
+-- #include <~/CrLua/CrLua>
+-- #include <~/CrLua/LockGlobals>
+--
+-- #include <~/CrLua/[OTHER_DEPENDENCY]> (repeat)
+--
+-- CrLua.assertRequired() -- do this BEFORE lock
+-- CrLua.lock()
+--
+-- -- Optionally enable logging.
+-- CrLua.Log.setLogLevel(CrLua.Log.LOG_LEVEL.DEBUG)
+-------------------------------------------------------------------------------
+
+local TAG = 'CrLua'
+
+-- Create a GLOBAL CrLua table.
+CrLua = CrLua or {}  -- global, <include> wraps in a do .. end block
+CrLua._require = { 'LockTable' }
+
+-------------------------------------------------------------------------------
+--- Assert all required packages exist.
+-- @param extraRequires table : list of additional require entries.
+-- @param table : table to search for _require entries, or CrLua if nil.
+--
+-- Modules add dependencies by having a _require item in their root table,
+-- with a list of module names.
+-- e.g. CrLua.MyModule = { _require = { 'OtherModule1', 'OtherModule2' } }.
+-------------------------------------------------------------------------------
+function CrLua.assertRequired(extraRequires, table)
+    local seen = {}
+    local requireSet = {}
+    local haveSet = {}
+
+    if extraRequires then
+        for _, name in ipairs(extraRequires) do
+            requireSet[name] = true
+        end
+    end
+
+    local function addRequireEntries(table, packagePath)
+        assert(type(table) == 'table')
+        if seen[table] then
+            return
+        end
+        seen[table] = true
+        if table._require then
+            for _, name in ipairs(table._require) do
+                requireSet[name] = true
+            end
+            if packagePath then
+                haveSet[packagePath] = true
+            end
+        end
+        for k, v in pairs(table) do
+            if type(v) == 'table' and not string.match(k, '^[_%l]') then
+                local recurse = type(k) == 'string' and string.match(k, '^%u')
+                if recurse then
+                    local childPackagePath = (packagePath and (packagePath .. '.') or '') .. k
+                    addRequireEntries(v, childPackagePath)
+                end
+            end
+        end
+    end
+    addRequireEntries(table or CrLua)
+
+    -- Make sure all required packages are present.
+    local message = false
+    for package, _ in pairs(requireSet) do
+        assert(type(package) == 'string')
+        -- Descend dot-delimited sub-package names.
+        local entry = CrLua
+        for subPackage in string.gmatch(package, '[^%.]+') do
+            entry = entry and entry[subPackage]
+        end
+        if not entry then
+            message = (message and message .. ', ' or '') .. package
+        end
+    end
+    if message then
+        error(TAG .. ': assertRequired missing ' .. message)
+    end
+
+    -- Make sure all present packages are required.
+    local message = false
+    for package, _ in pairs(haveSet) do
+        if not requireSet[package] then
+            message = (message and message .. ', ' or '') .. package
+        end
+    end
+    if message then
+        error(TAG .. ': assertRequired have not-required ' .. message)
+    end
+
+end
+
+-------------------------------------------------------------------------------
+--- Lock CrLua packages.
+--
+-- @param tableName string : name of table being locked, or nil for CrLua.
+-- @param table : table being locked, or nil for CrLua.
+--
+-- Make CrLua and nested packages read-only, with access requiring keys exist.
+--
+-- Locking rules:
+--
+-- (1.) '_data' is a reserved table name for mutable tables.  Do not lock.
+--
+-- (2.) If the table starts with a capital letter, make it read-only and
+-- require keys exist.  These are packages or constants, attempting to access
+-- a missing field is probably a typo.  (Override by adding an
+-- _allowMissingKeys = { 'tableName1', 'tableName2'} entry at the same level
+-- as the referenced tables.  Such tables allow reads to missing keys, as well
+-- as all sub-tables in them.)
+--
+-- (2.) Otherwise make it read-only but allow reads to missing keys (value nil).
+-- One can query membership by checking if a key exists.
+--
+-- This helps catch typos calling non-existent functions, or overwriting
+-- a constant value by mistake.
+-------------------------------------------------------------------------------
+function CrLua.lock(tableName, table)
+    local seen = {}
+
+    local function lockRecursive(tableName, table, allowMissingKeys)
+        assert(type(tableName) == 'string' and type(table) == 'table' and type(allowMissingKeys) == 'boolean')
+
+        -- Watch out for cycles!  This might happen if a script defines
+        -- an enum table, then later uses one of them in a different table.
+        if seen[table] then
+            return
+        end
+        seen[table] = true
+
+        -- Leave _data tables alone.
+        local isData = tableName == '_data'
+        if isData then
+            return
+        end
+
+        -- Get any missing keys entry BEFORE locking this table.
+        local allowMissingKeysTableNameSet = {}
+        if table._allowMissingKeys then
+            for _, tableName in ipairs(table._allowMissingKeys) do
+                allowMissingKeysTableNameSet[tableName] = true
+            end
+        end
+
+        -- Lock the given table.
+        local firstLetter = string.match(tableName, '%a')
+        local isUpper = firstLetter and firstLetter == string.upper(firstLetter)
+        if isUpper and not allowMissingKeys then
+            CrLua.LockTable.readOnlyRequireKey(tableName, table)
+        else
+            CrLua.LockTable.readOnly(tableName, table)
+        end
+
+        -- Lock sub-tables, respecting _allowMissingKeys values.
+        for k, v in pairs(table) do
+            if type(v) == 'table' then
+                local entryAllowMissingKeys = allowMissingKeys or allowMissingKeysTableNameSet[k] or false
+                lockRecursive(tostring(k), v, entryAllowMissingKeys)
+            end
+        end
+    end
+
+    lockRecursive(tableName or 'CrLua', table or CrLua, false)
+end
+
+-- ############################################################################
+-- #### END #include <~/CrLua/CrLua>
+-- ############################################################################
+
+-- ############################################################################
+-- #### START #include <~/CrLua/LockGlobals>
+-- ############################################################################
+
+-------------------------------------------------------------------------------
+--- Partially lock the _G global variable table.
+-- Include this AFTER creating any necessary globals to prevent new ones.
+--
+-- - Existing globals can still be read AND WRITTEN.
+-- - Cannot read non-existent globals.
+-- - Cannot write new globals.
+--
+-- This helps catch typos where what was meant to access a local instead
+-- references a (hopefully non-existent) global, as well as forgetting to use
+-- "local" when creating objects.
+--
+-- @author Darrell
+-------------------------------------------------------------------------------
+
+local TAG = 'CrLua.LockGlobals'
+local _lockGlobalsMetaTable = {}
+
+-- Index is only called when the key does not already exist.
+function _lockGlobalsMetaTable.__index(table, key)
+    error(TAG .. ': accessing missing global "' .. tostring(key or '<nil>') .. '", typo?', 2)
+end
+
+function _lockGlobalsMetaTable.__newindex(table, key, value)
+    error(TAG .. ': globals are locked, cannot create global variable "' .. tostring(key or '<nil>') .. '"', 2)
+end
+
+setmetatable(_G, _lockGlobalsMetaTable)
+
+-------------------------------------------------------------------------------
+
+-- Add a test function to the CrLua "namespace".
+CrLua = CrLua or {}  -- global, <include> wraps in a do .. end block
+CrLua.LockGlobals = assert(not CrLua.LockGlobals) and {
+    _require = { 'LockGlobals' }  -- require self to avoid missing require error
+}
+
+-- ############################################################################
+-- #### END #include <~/CrLua/LockGlobals>
+-- ############################################################################
+
+-- ############################################################################
+-- #### START #include <~/CrLua/LockTable>
+-- ############################################################################
+
+-------------------------------------------------------------------------------
+--- Access control for tables.
+--
+-- Locked tables are empty, using a metatable to detect and redirect all forms
+-- of access to the actual table data.  Metatables contain a few custom fields:
+-- - '_name' string table name.
+-- - '_attrSet' table from set attribute names to true.
+-- - '_tableContents' table holding the actual locked table content.
+--
+-- @author Darrell
+-------------------------------------------------------------------------------
+
+local TAG = 'CrLua.LockTable'
+
+CrLua = CrLua or {}  -- global, <include> wraps in a do .. end block
+CrLua.LockTable = assert(not CrLua.LockTable) and {
+    _require = {}
+}
+
+CrLua.LockTable.ATTR = {
+    READ_ONLY = 1,
+    REQUIRE_KEY = 2
+}
+
+CrLua.LockTable.ACCESS_TYPE = {
+    READ_MISSING = 'read missing',
+    WRITE_NEW = 'write new',
+    OVERWRITE = 'overwrite'
+}
+
+-------------------------------------------------------------------------------
+--- Error and stop script when misusing a locked table.
+-------------------------------------------------------------------------------
+function CrLua.LockTable._error(lockedTable, key, accessType)
+    assert(type(lockedTable) == 'table' and type(accessType) == 'string')
+    local metatable = assert(getmetatable(lockedTable))
+    local tableName = assert(metatable._name)
+    local keyName = tostring(key or '<nil>')
+    error(TAG .. ': ' .. accessType .. ' ' .. tableName .. '.' .. keyName)
+end
+
+-------------------------------------------------------------------------------
+--- Create a new table with the lock table metamethods.
+-- @param tableName string : use this as the tableName.key when reporting errors.
+-- @param attrs table : list of LockTable.ATTRS to apply.
+-- @param table : table to lock (this table itself is mutated!)
+-- @return table : the same table, returned for create-by-wrapping convenience.
+-------------------------------------------------------------------------------
+function CrLua.LockTable._apply(tableName, attrs, table)
+    assert(type(tableName) == 'string' and type(attrs) == 'table' and type(table) == 'table')
+
+    -- Do not attempt to lock a table that already has a metatable.
+    assert(not getmetatable(table), 'cannot apply LockTable when a metatable is already set: ' .. tableName)
+
+    local newMetaTable = {
+        _name = tableName,
+        _attrSet = {},
+        _tableContents = {}
+    }
+
+    -- Add the metatable methods to behave like the original table.
+    for k, v in pairs(CrLua.LockTable._metatable) do
+        newMetaTable[k] = v
+    end
+
+    -- Apply attrs.
+    for _, attr in ipairs(attrs) do
+        assert(type(attr) == 'number')
+        newMetaTable._attrSet[attr] = true
+    end
+
+    -- Move table contents.
+    for k, v in pairs(table) do
+        newMetaTable._tableContents[k] = v
+        table[k] = nil
+    end
+
+    setmetatable(table, newMetaTable)
+    return table
+end
+
+CrLua.LockTable._metatable = {}
+
+function CrLua.LockTable._metatable.__index(lockedTable, key)
+    local metatable = getmetatable(lockedTable)
+    local attrSet = metatable._attrSet
+    local tableContents = metatable._tableContents
+    local value = tableContents[key]
+    local existing = value ~= nil
+    if not existing and attrSet[CrLua.LockTable.ATTR.REQUIRE_KEY] then
+        CrLua.LockTable._error(lockedTable, key, CrLua.LockTable.ACCESS_TYPE.READ_MISSING)
+    end
+    return value
+end
+
+function CrLua.LockTable._metatable.__newindex(lockedTable, key, value)
+    local metatable = getmetatable(lockedTable)
+    local attrSet = metatable._attrSet
+    local tableContents = metatable._tableContents
+    local existing = tableContents[key] ~= nil
+    if attrSet[CrLua.LockTable.ATTR.READ_ONLY] then
+        local accessType = existing and CrLua.LockTable.ACCESS_TYPE.OVERWRITE or CrLua.LockTable.ACCESS_TYPE.WRITE_NEW
+        CrLua.LockTable._error(lockedTable, key, accessType)
+    elseif not existing and attrSet[CrLua.LockTable.ATTR.REQUIRE_KEY] then
+        CrLua.LockTable._error(lockedTable, key, CrLua.LockTable.ACCESS_TYPE.WRITE_NEW)
+    end
+    tableContents[key] = value
+end
+
+function CrLua.LockTable._metatable.__pairs(lockedTable)
+    local metatable = getmetatable(lockedTable)
+    local tableContents = metatable._tableContents
+    local function iter(_, k)
+        local k, v = next(tableContents, k)
+        if v ~= nil then
+            return k, v
+        end
+    end
+    return iter, lockedTable, nil
+end
+
+function CrLua.LockTable._metatable.__ipairs(lockedTable)
+    local metatable = getmetatable(lockedTable)
+    local tableContents = metatable._tableContents
+    local function iter(_, i)
+        local v = tableContents[i + 1]
+        if v ~= nil then
+            return i + 1, v
+        end
+    end
+    return iter, lockedTable, 0
+end
+
+function CrLua.LockTable._metatable.__len(lockedTable)
+    local metatable = getmetatable(lockedTable)
+    local tableContents = metatable._tableContents
+    return #tableContents
+end
+
+-------------------------------------------------------------------------------
+--- Make table read-only.
+-- Reads to missing values return nil, as normal.
+-- If the table has a _name entry, use that when reporting errors.
+-- @param table
+-- @param table : the same table as the argument for convenience assignment.
+-------------------------------------------------------------------------------
+function CrLua.LockTable.readOnly(tableName, table)
+    assert(type(tableName) == 'string' and type(table) == 'table')
+    assert(type(table) == 'table')
+
+    local attrs = { CrLua.LockTable.ATTR.READ_ONLY }
+    return CrLua.LockTable._apply(tableName, attrs, table)
+end
+
+-------------------------------------------------------------------------------
+--- Make table read-only, and error if accessing missing key.
+-- Helps catch typos reading from must-have-item tables.
+-- @param table
+-- @param table : the same table as the argument for convenience assignment.
+-------------------------------------------------------------------------------
+function CrLua.LockTable.readOnlyRequireKey(tableName, table)
+    assert(type(tableName) == 'string' and type(table) == 'table')
+
+    local attrs = { CrLua.LockTable.ATTR.READ_ONLY, CrLua.LockTable.ATTR.REQUIRE_KEY }
+    return CrLua.LockTable._apply(tableName, attrs, table)
+end
+
+-- ############################################################################
+-- #### END #include <~/CrLua/LockTable>
+-- ############################################################################
+
+-- ############################################################################
+-- #### START #include <~/CrLua/Log>
+-- ############################################################################
+
+-------------------------------------------------------------------------------
+--- Lua logging functions
+-- @author Darrell
+-------------------------------------------------------------------------------
+
+local TAG = 'CrLua.Log'
+
+CrLua = CrLua or {}  -- global, <include> wraps in a do .. end block
+CrLua.Log = assert(not CrLua.Log) and {
+    _require = {},
+    _data = {}
+}
+
+CrLua.Log.LOG_LEVEL = {
+    DEBUG = { level = 1, shortString = 'd' },
+    INFO = { level = 2, shortString = 'i' },
+    WARNING = { level = 3, shortString = 'w' },
+  ERROR = { level = 4, shortString = 'e' },
+    NONE = { level = 5, shortString = 'x' },
+}
+
+-- Store mutable level in a nested table to avoid mutating anything in Log.
+CrLua.Log._data.level = CrLua.Log.LOG_LEVEL.NONE
+
+-------------------------------------------------------------------------------
+--- Set the log level, only log messagees at this level and above.
+-- @param level table : CrLua.Log.LOG_LEVEL value.
+-------------------------------------------------------------------------------
+function CrLua.Log.setLogLevel(level)
+    assert(level and type(level.level) == 'number' and type(level.shortString) == 'string')
+    CrLua.Log._data.level = level
+end
+
+function CrLua.Log._logTable(message, table, depth)
+    assert(type(message) == 'string' and type(table) == 'table' and type(depth) == 'number')
+
+    local indent = '   '
+    local prefix = ''
+    if depth > 1 then
+        for i = 2, depth do
+            prefix = prefix .. indent
+        end
+    end
+    local indentedPrefix = prefix .. '   '
+
+    print(prefix .. message .. ' = {')
+    if depth < 4 then
+        for k, v in pairs(table) do
+            if type(v) == 'table' then
+                CrLua.Log._logTable(tostring(k), v, depth + 1)
+            else
+                print(indentedPrefix .. tostring(k) .. ' = ' .. tostring(v))
+            end
+        end
+    else
+        -- Stop once too deep (also prevents infinite loops if cycles).
+        print(indentedPrefix .. '...')
+    end
+    print(prefix .. '}')
+end
+
+function CrLua.Log._log(logLevel, tag, message, table)
+    -- Be verbose about bad arguments here, easy to pass the wrong item.
+    -- ALWAYS verify arguments even if log level will suppress logging,
+    -- otherwise bugs can creep in that only tickle when logging is enabled.
+    if type(tag) ~= 'string' then
+        error(TAG .. '_log: tag is not a string', 2)
+    elseif type(message) ~= 'string' then
+        error(TAG .. '_log: message is not a string', 2)
+    elseif table and type(table) ~= 'table' then
+        error(TAG .. '_log: table is not a table', 2)
+    end
+
+    if logLevel.level < CrLua.Log._data.level.level then
+        return
+    end
+
+    -- Insert the tag as message prefix.
+    message = tag .. ' ' .. message
+
+    -- Inject a [timestamp/level] prefix.
+    local timestamp = os.date('%I:%M.%S')
+    message = '[' .. timestamp .. '/' .. logLevel.shortString .. '] ' .. message
+
+    if table then
+        CrLua.Log._logTable(message, table, 1)
+    else
+        print(message)
+    end
+end
+
+-------------------------------------------------------------------------------
+--- Log a debug message.
+-- @param tag string.
+-- @param message string.
+-- @table optional table, logging contents if given.
+-------------------------------------------------------------------------------
+function CrLua.Log.d(tag, message, table)
+    CrLua.Log._log(CrLua.Log.LOG_LEVEL.DEBUG, tag, message, table)
+end
+
+-- ############################################################################
+-- #### END #include <~/CrLua/Log>
+-- ############################################################################
+
+-- ############################################################################
+-- #### START #include <~/CrLua/Util>
+-- ############################################################################
+
+-------------------------------------------------------------------------------
+--- Lua utility functions
+-- @author Darrell
+-------------------------------------------------------------------------------
+
+local TAG = 'CrLua.Util'
+
+CrLua = CrLua or {}  -- global, <include> wraps in a do .. end block
+CrLua.Util = assert(not CrLua.Util) and {
+    _require = {}
+}
+
+-------------------------------------------------------------------------------
+--- Compute the distance between two {x,y,z} vectors.
+-- @param a table : {x,y,z} keys.
+-- @param b table : {x,y,z} keys.
+-- @return distance squared (sqrt it if need exact, sq is fine for sorting).
+-------------------------------------------------------------------------------
+function CrLua.Util.distanceSq(a, b)
+    local dx = a.x - b.x
+    local dy = a.y - b.y
+    local dz = a.z - b.z
+    return (dx * dx) + (dy * dy) + (dz * dz)
+end
+
+-------------------------------------------------------------------------------
+--- Find the minimum value in a table, with optional function for value.
+-- @param table : table with arbitrary keys (may be a list).
+-- @param optional minFunction : call for each value to minimize.
+-- @return ? : table value with the min value.
+-- Function can return false/nil to reject value from consideration.
+-------------------------------------------------------------------------------
+function CrLua.Util.min(table, minFunction)
+    assert(type(table) == 'table' and ((not minFunction) or type(minFunction) == 'function'))
+
+    local minScore = nil
+    local minKey, minValue = nil, nil
+    for k, v in pairs(table) do
+        local score = (minFunction and minFunction(v)) or tonumber(v)
+        if score and (not minScore or score < minScore) then
+            minScore = score
+            minKey = k
+            minValue = v
+        end
+    end
+    return minKey, minValue
+end
+
+-- ############################################################################
+-- #### END #include <~/CrLua/Util>
+-- ############################################################################
+
+-- ############################################################################
+-- #### START #include <~/CrLua/TTS/Player>
+-- ############################################################################
+
+-------------------------------------------------------------------------------
+--- Tabletop Simulator helper functions.
+-- Unlike the other scripts, requires the Tabletop Simulator runtime
+-- (e.g., to call getSeatedPlayers).
+-- @author Darrell
+-------------------------------------------------------------------------------
+
+local TAG = 'CrLua.TTS.Player'
+
+CrLua = CrLua or {}  -- global, <include> wraps in a do .. end block
+CrLua.TTS = CrLua.TTS or {}
+CrLua.TTS.Player = assert(not CrLua.TTS.Player) and {
+    _require = { 'Util' }
+}
+
+-------------------------------------------------------------------------------
+--- Get the closest player (hand)
+-- @param position table : {x,y,z}.
+-- @return string : player color.
+-------------------------------------------------------------------------------
+function CrLua.TTS.Player.closest(position)
+    assert(position and type(position.x) == 'number')
+
+    local function distanceFunction(color)
+        local player = Player[color]
+        if not player then
+            return false
+        end
+        if player.getHandCount() == 0 then
+            return false
+        end
+        local handPosition = player.getHandTransform(1).position
+        return CrLua.Util.distanceSq(position, handPosition)
+    end
+
+    local seated = getSeatedPlayers()
+    local _, color = CrLua.Util.min(seated, distanceFunction)
+    return color
+end
+
+-------------------------------------------------------------------------------
+--- Does the player exist?
+-- @param color string : player color.
+-- @return boolean : true if player is seated at the table.
+-------------------------------------------------------------------------------
+function CrLua.TTS.Player.isSeated(color)
+    assert(type(color) == 'string')
+    for _, seated in ipairs(getSeatedPlayers()) do
+        if seated == color then
+            return true
+        end
+    end
+    return false
+end
+
+-- ############################################################################
+-- #### END #include <~/CrLua/TTS/Player>
+-- ############################################################################
+
+CrLua.assertRequired({'Log', 'TTS.Player'}) -- do this BEFORE lock
+CrLua.lock()
+
+-- ############################################################################
+-- #### END #include <~/CrLua/Objects/ActivePassedToken>
+-- ############################################################################
